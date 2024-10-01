@@ -3,15 +3,26 @@ package com.learnkafkastreams.topology;
 import com.learnkafkastreams.domain.Order;
 import com.learnkafkastreams.domain.OrderLineItem;
 import com.learnkafkastreams.domain.OrderType;
+import com.learnkafkastreams.domain.TotalRevenue;
+import com.learnkafkastreams.serdes.SerdeFactory;
+import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TopologyTestDriver;
+import org.apache.kafka.streams.state.KeyValueStore;
+import org.apache.kafka.streams.state.ReadOnlyWindowStore;
+import org.apache.kafka.streams.state.WindowStore;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
-import static com.learnkafkastreams.topology.OrdersTopology.ORDERS;
+import static com.learnkafkastreams.topology.OrdersTopology.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class OrdersTopologyTest {
 
@@ -38,16 +49,16 @@ class OrdersTopologyTest {
                 new BigDecimal("27.00"),
                 OrderType.GENERAL,
                 orderItems,
-                LocalDateTime.now()
-                //LocalDateTime.now(ZoneId.of("UTC"))
+                //LocalDateTime.now()
+                LocalDateTime.parse("2023-02-21T21:25:01")
         );
 
         var order2 = new Order(54321, "store_1234",
                 new BigDecimal("15.00"),
                 OrderType.RESTAURANT,
                 orderItemsRestaurant,
-                LocalDateTime.now()
-                //LocalDateTime.now(ZoneId.of("UTC"))
+                // LocalDateTime.now()
+                LocalDateTime.parse("2023-02-21T21:25:01")
         );
         var keyValue1 = KeyValue.pair( order1.orderId().toString()
                 , order1);
@@ -58,5 +69,84 @@ class OrdersTopologyTest {
 
         return  List.of(keyValue1, keyValue2);
 
+    }
+
+    @BeforeEach
+    void setUp() {
+        topologyTestDriver = new TopologyTestDriver(OrdersTopology.topology());
+
+        ordersInputTopic = topologyTestDriver.createInputTopic(
+                ORDERS,
+                Serdes.String().serializer(),
+                SerdeFactory.genericSerde(Order.class).serializer()
+        );
+    }
+
+    @AfterEach
+    void tearDown() {
+        topologyTestDriver.close();
+    }
+
+    @Test
+    void ordersCount() {
+        ordersInputTopic
+                .pipeKeyValueList(orders());
+
+        final KeyValueStore<String, Long> generalOrderCountStore = topologyTestDriver
+                .getKeyValueStore(GENERAL_ORDERS_COUNT);
+
+        final Long store1234 = generalOrderCountStore.get("store_1234");
+        assertEquals(1, store1234);
+    }
+
+    @Test
+    void ordersRevenue() {
+        ordersInputTopic
+                .pipeKeyValueList(orders());
+
+        final KeyValueStore<String, TotalRevenue> generalOrderCountStore = topologyTestDriver
+                .getKeyValueStore(GENERAL_ORDERS_REVENUE);
+
+        final TotalRevenue store1234 = generalOrderCountStore.get("store_1234");
+        assertEquals(1, store1234.runningOrderCount());
+    }
+
+    @Test
+    void ordersRevenueMultiple() {
+        ordersInputTopic
+                .pipeKeyValueList(orders());
+        ordersInputTopic
+                .pipeKeyValueList(orders());
+
+        final KeyValueStore<String, TotalRevenue> generalOrderCountStore = topologyTestDriver
+                .getKeyValueStore(GENERAL_ORDERS_REVENUE);
+
+        final TotalRevenue store1234 = generalOrderCountStore.get("store_1234");
+        assertEquals(2, store1234.runningOrderCount());
+    }
+
+    @Test
+    void ordersRevenueByWindow() {
+        ordersInputTopic
+                .pipeKeyValueList(orders());
+        ordersInputTopic
+                .pipeKeyValueList(orders());
+
+        final WindowStore<String, TotalRevenue> generalOrderCountStore = topologyTestDriver
+                .getWindowStore(GENERAL_ORDERS_REVENUE_WINDOW);
+
+        generalOrderCountStore
+                .all()
+                .forEachRemaining(windowedTotalRevenueKeyValue -> {
+                    var startTime = windowedTotalRevenueKeyValue.key.window().startTime();
+                    var endTime = windowedTotalRevenueKeyValue.key.window().endTime();
+                    var totalRevenue = windowedTotalRevenueKeyValue.value;
+                    assertEquals(2, totalRevenue.runningOrderCount());
+                    var expectedStartTime = LocalDateTime.parse("2023-02-21T21:25:00");
+                    var expectedEndTime = LocalDateTime.parse("2023-02-21T21:25:15");
+
+                    assert LocalDateTime.ofInstant(startTime, ZoneId.of(ZoneId.SHORT_IDS.get("CST"))).equals(expectedStartTime);
+                    assert LocalDateTime.ofInstant(endTime, ZoneId.of(ZoneId.SHORT_IDS.get("CST"))).equals(expectedEndTime);
+                });
     }
 }

@@ -25,13 +25,14 @@ public class GreetingsStreamApp {
     public static void main(String[] args) {
         Properties properties = new Properties();
         properties.put(StreamsConfig.APPLICATION_ID_CONFIG, "greetings-app");
-        properties.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "");
+        properties.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
         properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         properties.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.StringSerde.class);
         properties.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.StringSerde.class);
         properties.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, Runtime.getRuntime().availableProcessors());
         properties.put(StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG, GreetingDeserializationExceptionHandler.class);
         properties.put(StreamsConfig.DEFAULT_PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG, GreetingStreamSerializationExceptionHandler.class);
+        properties.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2);
         createTopics(properties, List.of(GREETINGS, GREETINGS_UPPERCASE, GREETINGS_SPANISH));
         try (var kafkaStreams = new KafkaStreams(GreetingsTopology.buildTopology(), properties)) {
             kafkaStreams.setUncaughtExceptionHandler(new GreetingStreamProcessorExceptionHandler());
